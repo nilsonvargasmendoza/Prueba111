@@ -685,6 +685,14 @@ const firebaseConfig = {
 };
 
 // ══════════════════════════════════════════════════════════
+//  SEGURIDAD: SHA-256 para contraseñas
+// ══════════════════════════════════════════════════════════
+async function hashPassword(raw) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+// ══════════════════════════════════════════════════════════
 //  DEFAULTS (se cargan la primera vez que Firestore está vacío)
 // ══════════════════════════════════════════════════════════
 const DEFAULT_ACCOUNTS = [
@@ -725,10 +733,11 @@ async function initFirebase() {
     const snap = await db.collection('accounts').limit(1).get();
     if (snap.empty) {
       const batch = db.batch();
-      DEFAULT_ACCOUNTS.forEach(acc => {
-        const { id, ...data } = acc;
-        batch.set(db.collection('accounts').doc(id), data);
-      });
+      for (const acc of DEFAULT_ACCOUNTS) {
+        const { id, password, ...rest } = acc;
+        const hashedPw = await hashPassword(password);
+        batch.set(db.collection('accounts').doc(id), { ...rest, password: hashedPw });
+      }
       await batch.commit();
     }
 
@@ -849,7 +858,8 @@ async function doLogin() {
   const err = $('loginErr');
   const btn = $('loginBtn');
 
-  const acc = S.accounts.find(a => a.username === u && a.password === p);
+  const hashedInput = await hashPassword(p);
+  const acc = S.accounts.find(a => a.username === u && a.password === hashedInput);
   if (!acc) {
     err.classList.remove('show');
     void err.offsetWidth;
@@ -1295,7 +1305,8 @@ async function saveAccount() {
   const dup = S.accounts.find(a => a.username === username && a.id !== S.editAccId);
   if (dup) { toast('Ese nombre de usuario ya existe', 'e'); return; }
 
-  const data = { name, role, username, password, gender: S.editAccG, isAdmin: false };
+  const hashedPw = await hashPassword(password);
+  const data = { name, role, username, password: hashedPw, gender: S.editAccG, isAdmin: false };
 
   try {
     if (S.editAccId) {
@@ -1338,7 +1349,8 @@ async function confirmChangePw() {
   const pw = $('cpwInp').value;
   if (pw.length < 6) { toast('Mínimo 6 caracteres', 'e'); return; }
   try {
-    await db.collection('accounts').doc(S.cpwTargetId).update({ password: pw });
+    const hashedPw = await hashPassword(pw);
+    await db.collection('accounts').doc(S.cpwTargetId).update({ password: hashedPw });
     toast('Contraseña actualizada', 's');
     closeOvl('ovChangePw');
   } catch (e) {
